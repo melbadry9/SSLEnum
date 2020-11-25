@@ -1,6 +1,13 @@
 # SSLEnum
 Reconnaissance using SSL certificate Alt Names and Organization
 
+## Install
+
+```bash
+pip3 install -r requirements.txt
+```
+
+
 ## Usage
 
 - Help 
