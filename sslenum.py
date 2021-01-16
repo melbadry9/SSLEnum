@@ -1,12 +1,12 @@
 import sys
 import ssl
 import json
+import socket
 import OpenSSL
 import argparse
-#import tldextract
+import tldextract
 from concurrent.futures import ThreadPoolExecutor
 from urllib3.contrib.pyopenssl import get_subj_alt_name
-
 
 def read_crt(host,port):
     x509 = OpenSSL.crypto.load_certificate(
@@ -34,13 +34,31 @@ def grab_info(host, port=443):
         cn = extract_cn(crt)
         domains = extract_alt_names(crt)
         return {"host": host, "org": org, "cn": cn, "alt_doms": domains}
+    except ConnectionRefusedError:
+        pass
+    
+    except ConnectionResetError:
+        pass
+
+    except socket.error:
+        pass
+
     except Exception as e:
-        print(e)
+        print(host ,e)
 
 def read_file(file):
     with open(file, "r", encoding="utf-8") as e:
         domains = [ dom.rstrip() for dom in e.read().splitlines() ]
         return domains
+
+def check_dangling(data):
+    for i in data:
+        try:
+            host = tldextract.extract(i['host']).registered_domain
+            cn = tldextract.extract(i['cn']).registered_domain
+            if host != cn: print(i['host'])
+        except:
+            print(i['host'])
 
 def args():
     parser = argparse.ArgumentParser()
@@ -52,6 +70,7 @@ def args():
     group.add_argument("-dom","--domain", action="store_true")
     group.add_argument("-org","--organization", action="store_true")
     group.add_argument("-cn","--common_name", action="store_true")
+    group.add_argument("-dns","--dangling_dns", action="store_true")
     return parser.parse_args()
 
 def mass_info():
@@ -64,8 +83,8 @@ def mass_info():
     Process.shutdown(wait=True)
     
     for re in results:
-        print(re)
-        log_data.append(re)
+        if re:
+            log_data.append(re)
 
     if options.domain:
         for re in log_data: 
@@ -89,6 +108,9 @@ def mass_info():
                 print("{0}: {1}".format(re['host'], re['cn']))
             except KeyError:
                 pass
+
+    if options.dangling_dns:
+        check_dangling(log_data)
 
     with open("log.json", "w", encoding="utf-8") as log:
         log.write(json.dumps(log_data, indent=4))
