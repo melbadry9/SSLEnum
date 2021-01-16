@@ -34,8 +34,8 @@ def grab_info(host, port=443):
         cn = extract_cn(crt)
         domains = extract_alt_names(crt)
         return {"host": host, "org": org, "cn": cn, "alt_doms": domains}
-    except BlockingIOError:
-        pass
+    except Exception as e:
+        print(e)
 
 def read_file(file):
     with open(file, "r", encoding="utf-8") as e:
