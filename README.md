@@ -13,14 +13,16 @@ pip3 install -r requirements.txt
 - Help 
 
 ```txt
-usage: sslenum.py [-h] -l LIST [-t THREADS] [-d | -o]
+usage: sslenum.py [-h] -l LIST [-t THREADS] [-dom | -org | -cn | -dns]
 
 optional arguments:
   -h, --help            show this help message and exit
   -l LIST, --list LIST
   -t THREADS, --threads THREADS
-  -d, --domain
-  -o, --organization
+  -dom, --domain
+  -org, --organization
+  -cn, --common_name
+  -dns, --dangling_dns
   ```
 
 - Search for Alt Names
@@ -33,4 +35,10 @@ python3 sslenum.py -l list.txt -t 10 -d
 
 ```bash
 python3 sslenum.py -l list.txt -t 10 -o
+```
+
+- Check for mismatched SSL certificate data compared to a hostname
+
+```bash
+python3 sslenum.py -l list.txt -t 10 -dns
 ```
