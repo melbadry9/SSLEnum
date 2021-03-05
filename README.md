@@ -28,13 +28,13 @@ optional arguments:
 - Search for Alt Names
 
 ```bash
-python3 sslenum.py -l list.txt -t 10 -d
+python3 sslenum.py -l list.txt -t 10 -dom
 ```
 
 - Grab Orgnization Names
 
 ```bash
-python3 sslenum.py -l list.txt -t 10 -o
+python3 sslenum.py -l list.txt -t 10 -org
 ```
 
 - Check for mismatched SSL certificate data compared to a hostname
