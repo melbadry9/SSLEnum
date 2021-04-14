@@ -1,5 +1,5 @@
 # SSLEnum
-Reconnaissance using SSL certificate Alt Names and Organization
+Reconnaissance using SSL certificate Alt Names and Organization - Dangling DNS records - 
 
 ## Install
 
