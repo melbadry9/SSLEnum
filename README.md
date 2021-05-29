@@ -1,16 +1,16 @@
 # SSLEnum
-Reconnaissance using SSL certificate Alt Names and Organization - Dangling DNS records - 
+
+Reconnaissance using SSL certificate Alt Names and Organization - Dangling DNS records -
 
 ## Install
 
 ```bash
-pip3 install -r requirements.txt
+cargo build --release
 ```
-
 
 ## Usage
 
-- Help 
+- Help
 
 ```txt
 usage: sslenum.py [-h] -l LIST [-t THREADS] [-dom | -org | -cn | -dns]
