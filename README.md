@@ -6,6 +6,7 @@ Reconnaissance using SSL certificate Alt Names and Organization - Dangling DNS r
 
 ```bash
 cargo build --release
+sudo cp /target/release/sslenum /usr/bin
 ```
 
 ## Usage
@@ -13,32 +14,21 @@ cargo build --release
 - Help
 
 ```txt
-usage: sslenum.py [-h] -l LIST [-t THREADS] [-dom | -org | -cn | -dns]
+SSLEnum recon tool 0.1
+Mohamed Elbadry <me@melbadry9.xyz>
 
-optional arguments:
-  -h, --help            show this help message and exit
-  -l LIST, --list LIST
-  -t THREADS, --threads THREADS
-  -dom, --domain
-  -org, --organization
-  -cn, --common_name
-  -dns, --dangling_dns
+USAGE:
+    sslenum [OPTIONS]
+
+FLAGS:
+    -h, --help       Prints help information
+    -V, --version    Prints version information      
+
+OPTIONS:
+    -d, --domain <DOMAIN>      Sets domain to check  
+    -t, --threads <THREADS>    Sets number of threads
   ```
 
-- Search for Alt Names
-
 ```bash
-python3 sslenum.py -l list.txt -t 10 -dom
-```
-
-- Grab Orgnization Names
-
-```bash
-python3 sslenum.py -l list.txt -t 10 -org
-```
-
-- Check for mismatched SSL certificate data compared to a hostname
-
-```bash
-python3 sslenum.py -l list.txt -t 10 -dns
-```
+cat subdomains.list | sslenum -t 5 
+````
