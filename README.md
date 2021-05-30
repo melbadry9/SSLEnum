@@ -5,8 +5,9 @@ Reconnaissance using SSL certificate Alt Names and Organization - Dangling DNS r
 ## Install
 
 ```bash
-cargo build --release
-sudo cp /target/release/sslenum /usr/bin
+git clone https://github.com/melbadry9/SSLEnum.git
+cd SSLEnum
+cargo install --path .
 ```
 
 ## Usage
