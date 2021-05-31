@@ -1,6 +1,6 @@
 use addr::parser::DnsName;
 use addr::psl::List;
-use clap::{App, Arg};
+use clap::{App, Arg, value_t};
 use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode};
 use openssl::stack::StackRef;
 use openssl::x509::X509Ref;
@@ -9,6 +9,7 @@ use openssl_probe;
 use serde::{Deserialize, Serialize};
 use std::io::{self, BufRead};
 use std::net::TcpStream;
+use std::time::Duration;
 use threadpool::ThreadPool;
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -45,7 +46,7 @@ impl DomainData {
     }
 }
 
-fn extract_ssl(domain: &String) -> Result<X509, ()> {
+fn extract_ssl(domain: &String, port: &String) -> Result<X509, ()> {
     let mut connector = SslConnector::builder(SslMethod::tls_client()).unwrap();
     connector.set_verify(SslVerifyMode::NONE);
     let conn = connector.build();
@@ -55,14 +56,24 @@ fn extract_ssl(domain: &String) -> Result<X509, ()> {
         .use_server_name_indication(true)
         .verify_hostname(true);
 
-    let con_string = format!("{}:443", &domain);
-    let stream = TcpStream::connect(con_string);
+    let con_string = format!("{}:{}", &domain, &port);
+    let stream = TcpStream::connect(&con_string);
     match stream {
         Ok(stream) => {
-            let stream = conn.connect(&domain, stream).unwrap();
-            let cert_stack: &StackRef<X509> = stream.ssl().peer_cert_chain().unwrap();
-            let certs: Vec<X509> = cert_stack.iter().map(X509Ref::to_owned).collect();
-            Ok(certs[0].to_owned())
+            let _ = stream.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+            let _ = stream.set_write_timeout(Some(Duration::from_secs(2))).unwrap();
+            let stream = conn.connect(&domain, stream);
+            match stream {
+                Ok(stream) => {
+                    let cert_stack: &StackRef<X509> = stream.ssl().peer_cert_chain().unwrap();
+                    let certs: Vec<X509> = cert_stack.iter().map(X509Ref::to_owned).collect();
+                    Ok(certs[0].to_owned())
+                }
+                Err(_) => {
+                    //eprintln!("{}", e.to_string());
+                    Err(())
+                }
+            }
         }
         Err(_err) => Err(()),
     }
@@ -95,7 +106,7 @@ fn get_value<R: AsRef<X509Ref>>(n: &str, cert: &R) -> Vec<String> {
         let mut org_name: Vec<String> = Vec::with_capacity(org.len());
         for o in org {
             if let Err(ref e) = o {
-                println!("While parsing orgnization name: {}", &e);
+                println!("While parsing organization name: {}", &e);
             }
             org_name.push(String::from(AsRef::<str>::as_ref(&o.unwrap())));
         }
@@ -123,8 +134,8 @@ fn get_value<R: AsRef<X509Ref>>(n: &str, cert: &R) -> Vec<String> {
     }
 }
 
-fn logic(dom: String) {
-    let ex_cert = extract_ssl(&dom);
+fn logic(dom: String, port: String) {
+    let ex_cert = extract_ssl(&dom, &port);
     match ex_cert {
         Ok(ex_cert) => {
             let cn = get_value("cn", &ex_cert);
@@ -133,25 +144,27 @@ fn logic(dom: String) {
 
             let mut ch_domain = DomainData {
                 name: dom,
-                org: org,
-                cn: cn,
-                alt_doms: alt_doms,
+                org,
+                cn,
+                alt_doms,
                 dangling: false,
             };
             ch_domain.check_dangling();
             let ser_domain = serde_json::to_string(&ch_domain).unwrap();
 
             println!("{}", ser_domain);
-        },
-        Err(_) => {eprintln!("")}
+        }
+        Err(_) => {
+            //eprintln!("SSL/TLS not enabled on: {}:{}", &dom, &port);
+        }
     }
 }
 
 fn main() {
     openssl_probe::init_ssl_cert_env_vars();
 
-    let args = App::new("SSLEnum recon tool")
-        .version("0.1")
+    let args = App::new("SSLEnum [SSL Data Enumeration]")
+        .version("0.2")
         .author("Mohamed Elbadry <me@melbadry9.xyz>")
         .arg(
             Arg::with_name("threads")
@@ -159,7 +172,8 @@ fn main() {
                 .long("threads")
                 .value_name("THREADS")
                 .help("Sets number of threads")
-                .takes_value(true),
+                .takes_value(true)
+                .default_value("5"),
         )
         .arg(
             Arg::with_name("domain")
@@ -169,21 +183,28 @@ fn main() {
                 .help("Sets domain to check")
                 .takes_value(true),
         )
+        .arg(
+            Arg::with_name("port")
+                .short("p")
+                .long("port")
+                .value_name("PORT")
+                .help("Sets port number")
+                .takes_value(true)
+                .default_value("443"),
+        )
         .get_matches();
+
 
     if !(args.is_present("domain")) {
         let stream = io::stdin();
-        let pool = ThreadPool::new(
-            args.value_of("threads")
-                .unwrap_or("3")
-                .parse::<usize>()
-                .unwrap_or(5),
-        );
+        let threads_num = value_t!(args.value_of("threads"), usize).unwrap_or(5);
+        let pool = ThreadPool::new(threads_num);
         for domain in stream.lock().lines() {
-            pool.execute(|| logic(domain.unwrap().to_string()));
+            let tmp = args.value_of("port").unwrap().to_string().clone();
+            pool.execute( move || logic(domain.unwrap().to_string(), tmp));
         }
         pool.join();
     } else {
-        logic(args.value_of("domain").unwrap().to_string())
+        logic(args.value_of("domain").unwrap().to_string(), args.value_of("port").unwrap().to_string())
     }
 }
