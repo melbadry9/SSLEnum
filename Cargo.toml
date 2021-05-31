@@ -1,6 +1,6 @@
 [package]
 name = "sslenum"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["melbadry9 <me@melbadry9.xyz>"]
 edition = "2018"
 

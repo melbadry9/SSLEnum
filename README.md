@@ -15,7 +15,7 @@ cargo install --path .
 - Help
 
 ```txt
-SSLEnum recon tool 0.1
+SSLEnum [SSL Data Enumeration] 0.2
 Mohamed Elbadry <me@melbadry9.xyz>
 
 USAGE:
@@ -23,13 +23,14 @@ USAGE:
 
 FLAGS:
     -h, --help       Prints help information
-    -V, --version    Prints version information      
+    -V, --version    Prints version information
 
 OPTIONS:
-    -d, --domain <DOMAIN>      Sets domain to check  
-    -t, --threads <THREADS>    Sets number of threads
+    -d, --domain <DOMAIN>      Sets domain to check
+    -p, --port <PORT>          Sets port number [default: 443]
+    -t, --threads <THREADS>    Sets number of threads [default: 5]
   ```
 
 ```bash
-cat subdomains.list | sslenum -t 5 
+cat subdomains.list | sslenum -t 5 -p 443
 ````
