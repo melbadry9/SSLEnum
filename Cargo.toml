@@ -3,6 +3,9 @@ name = "sslenum"
 version = "0.2.0"
 authors = ["melbadry9 <me@melbadry9.xyz>"]
 edition = "2018"
+description = "SSL certificate Extractor"
+documentation = "https://github.com/melbadry9/sslenum"
+repository = "https://github.com/melbadry9/sslenum"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
