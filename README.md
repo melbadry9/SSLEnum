@@ -4,6 +4,12 @@ Reconnaissance using SSL certificate Alt Names and Organization - Dangling DNS r
 
 ## Install
 
+- Install from `crates.io`
+```bash
+cargo install sslenum --force 
+```
+
+- Intall from `github`
 ```bash
 git clone https://github.com/melbadry9/SSLEnum.git
 cd SSLEnum
@@ -15,7 +21,7 @@ cargo install --path .
 - Help
 
 ```txt
-SSLEnum [SSL Data Enumeration] 0.2
+SSLEnum [SSL Data Enumeration] 0.2.1
 Mohamed Elbadry <me@melbadry9.xyz>
 
 USAGE:
