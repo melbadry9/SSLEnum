@@ -1,6 +1,6 @@
 # SSLEnum
 
-Reconnaissance using SSL certificate Alt Names and Organization - Dangling DNS records -
+Reconnaissance using SSL certificate data (Subject Name, Subject Alt Names) - Dangling DNS records -
 
 ## Install
 
@@ -40,3 +40,25 @@ OPTIONS:
 ```bash
 cat subdomains.list | sslenum -t 5 -p 443
 ````
+
+- Output
+
+```json
+melbadry9@localhost:/test$ sslenum -d hackerone.com | jq
+
+{
+  "name": "hackerone.com",
+  "org": [
+    "HackerOne Inc."      
+  ],
+  "cn": [
+    "hackerone.com"       
+  ],
+  "alt_doms": [
+    "hackerone.com",      
+    "www.hackerone.com",  
+    "api.hackerone.com"   
+  ],
+  "dangling": false  
+}
+```
