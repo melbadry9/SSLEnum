@@ -13,16 +13,17 @@ use threadpool::ThreadPool;
 
 #[derive(Serialize, Deserialize, Debug)]
 struct DomainData {
-    name: String,
+    hostname: String,
+    ip: String,
     org: Vec<String>,
     cn: Vec<String>,
-    alt_doms: Vec<String>,
+    alt_names: Vec<String>,
     dangling: bool,
 }
 
 impl DomainData {
     fn check_dangling(self: &mut Self) {
-        let domain = List.parse_dns_name(self.name.as_str()).unwrap();
+        let domain = List.parse_dns_name(self.hostname.as_str()).unwrap();
         let host = List.parse_dns_name(self.cn[0].as_str());
         match host {
             Ok(host) => {
@@ -67,13 +68,14 @@ fn make_connection(domain: String, port: String) {
                     Ok(ex_cert) => {
                         let cn = get_value("cn", &ex_cert);
                         let org = get_value("org", &ex_cert);
-                        let alt_doms = get_value("doms", &ex_cert);
+                        let alt_names = get_value("doms", &ex_cert);
 
                         let mut ch_domain = DomainData {
-                            name: tmp_dom.to_string(),
+                            hostname: tmp_dom.to_string(),
+                            ip: ip.ip().to_string(),
                             org,
                             cn,
-                            alt_doms,
+                            alt_names,
                             dangling: false,
                         };
                         ch_domain.check_dangling();
@@ -91,11 +93,7 @@ fn make_connection(domain: String, port: String) {
     }
 }
 
-fn extract_ssl(
-    stream: &Result<TcpStream, std::io::Error>,
-    conn: &SslConnector,
-    domain: &str,
-) -> Result<X509, ()> {
+fn extract_ssl(stream: &Result<TcpStream, std::io::Error>, conn: &SslConnector, domain: &str,) -> Result<X509, ()> {
     match stream {
         Ok(stream) => {
             let _ = stream
@@ -180,7 +178,7 @@ fn main() {
     openssl_probe::init_ssl_cert_env_vars();
 
     let args = App::new("SSLEnum [SSL Data Enumeration]")
-        .version("0.2.1")
+        .version("1.0.0")
         .author("Mohamed Elbadry <me@melbadry9.xyz>")
         .arg(
             Arg::with_name("threads")

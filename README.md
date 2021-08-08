@@ -21,7 +21,7 @@ cargo install --path .
 - Help
 
 ```txt
-SSLEnum [SSL Data Enumeration] 0.2.1
+SSLEnum [SSL Data Enumeration] 1.0.0
 Mohamed Elbadry <me@melbadry9.xyz>
 
 USAGE:
@@ -33,7 +33,7 @@ FLAGS:
 
 OPTIONS:
     -d, --domain <DOMAIN>      Sets domain to check
-    -p, --port <PORT>          Sets port number [default: 443]
+    -p, --port <PORT>          Sets port number [default: 443]    
     -t, --threads <THREADS>    Sets number of threads [default: 5]
   ```
 
@@ -44,21 +44,27 @@ cat subdomains.list | sslenum -t 5 -p 443
 - Output
 
 ```json
-melbadry9@localhost:/test$ sslenum -d hackerone.com | jq
+melbadry9@localhost:/test$ sslenum -d example.com | jq
 
 {
-  "name": "hackerone.com",
+  "hostname": "example.com",
+  "ip": "93.184.216.34",
   "org": [
-    "HackerOne Inc."      
+    "Internet Corporation for Assigned Names and Numbers"
   ],
   "cn": [
-    "hackerone.com"       
+    "www.example.org"
   ],
-  "alt_doms": [
-    "hackerone.com",      
-    "www.hackerone.com",  
-    "api.hackerone.com"   
+  "alt_names": [
+    "www.example.org",
+    "example.com",
+    "example.edu",
+    "example.net",
+    "example.org",
+    "www.example.com",
+    "www.example.edu",
+    "www.example.net"
   ],
-  "dangling": false  
+  "dangling": true
 }
 ```
