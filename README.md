@@ -21,7 +21,7 @@ cargo install --path .
 - Help
 
 ```txt
-SSLEnum [SSL Data Enumeration] 1.0.0
+SSLEnum [SSL Data Enumeration] 1.0.1
 Mohamed Elbadry <me@melbadry9.xyz>
 
 USAGE:
@@ -65,6 +65,6 @@ melbadry9@localhost:/test$ sslenum -d example.com | jq
     "www.example.edu",
     "www.example.net"
   ],
-  "dangling": true
+  "dangling": false
 }
 ```
