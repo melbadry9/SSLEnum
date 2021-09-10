@@ -24,25 +24,37 @@ struct DomainData {
 impl DomainData {
     fn check_dangling(self: &mut Self) {
         let domain = List.parse_dns_name(self.hostname.as_str()).unwrap();
-        let host = List.parse_dns_name(self.cn[0].as_str());
-        match host {
-            Ok(host) => {
-                let host_root = host.root();
-                match host_root {
-                    Some(host_root) => {
-                        if !(domain.root().unwrap() == host_root) {
+        let mut dns_names: Vec<String> = Vec::new();
+
+        dns_names.extend(self.cn.clone());
+        dns_names.extend(self.alt_names.clone());
+ 
+        for cand in dns_names {
+            let host = List.parse_dns_name(cand.as_str());
+            match host {
+                Ok(host) => {
+                    let host_root = host.root();
+                    match host_root {
+                        Some(host_root) => {
+                            if !(domain.root().unwrap() == host_root) {
+                                self.dangling = true;
+                            } else {
+                                self.dangling = false;
+                                break;
+                            }
+                        }
+                        None => {
                             self.dangling = true;
                         }
                     }
-                    None => {
-                        self.dangling = true;
-                    }
+                }
+                Err(_) => {
+                    self.dangling = false;
                 }
             }
-            Err(_) => {
-                self.dangling = false;
-            }
+
         }
+        
     }
 }
 

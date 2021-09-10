@@ -1,6 +1,6 @@
 [package]
 name = "sslenum"
-version = "1.0.0"
+version = "1.0.1"
 authors = ["melbadry9 <me@melbadry9.xyz>"]
 edition = "2018"
 description = "SSL certificate Extractor"
