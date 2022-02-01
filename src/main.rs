@@ -30,7 +30,8 @@ impl DomainData {
         dns_names.extend(self.alt_names.clone());
  
         for cand in dns_names {
-            let host = List.parse_dns_name(cand.as_str());
+            let cleaned_cand = &cand.clone().to_lowercase();
+            let host = List.parse_dns_name(cleaned_cand.as_str());
             match host {
                 Ok(host) => {
                     let host_root = host.root();
@@ -83,7 +84,7 @@ fn make_connection(domain: String, port: String) {
                         let alt_names = get_value("doms", &ex_cert);
 
                         let mut ch_domain = DomainData {
-                            hostname: tmp_dom.to_string(),
+                            hostname: tmp_dom.to_string().to_lowercase(),
                             ip: ip.ip().to_string(),
                             org,
                             cn,
