@@ -1,6 +1,6 @@
 # SSLEnum
 
-Reconnaissance using SSL certificate data (Subject Name, Subject Alt Names) - Dangling DNS records -
+Extract SSL certificate data (Subject Name, Subject Alt Names, Organisation)
 
 ## Install
 
@@ -38,14 +38,13 @@ OPTIONS:
   ```
 
 ```bash
-cat subdomains.list | sslenum -t 5 -p 443
+$ cat subdomains.list | sslenum -t 5 -p 443
+$ sslenum -d example.com | jq
 ````
 
 - Output
 
 ```json
-melbadry9@localhost:/test$ sslenum -d example.com | jq
-
 {
   "hostname": "example.com",
   "ip": "93.184.216.34",
