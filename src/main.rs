@@ -1,15 +1,19 @@
-use addr::parser::DnsName;
-use addr::psl::List;
-use clap::{value_t, App, Arg};
+use clap::{App, Arg, value_t};
 use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode};
-use openssl::stack::StackRef;
-use openssl::x509::{X509Ref, X509};
+use openssl::x509::X509;
 use openssl_probe;
 use serde::{Deserialize, Serialize};
-use std::io::{self, BufRead};
-use std::net::{TcpStream, ToSocketAddrs};
+use std::collections::HashSet;
+use std::io as stdio;
+use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
+use std::sync::Arc;
 use std::time::Duration;
-use threadpool::ThreadPool;
+use tokio::fs::OpenOptions;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::sync::{Semaphore, Mutex};
+use tokio::task;
+use futures::stream::{FuturesUnordered, StreamExt};
+use url::Url;
 
 #[derive(Serialize, Deserialize, Debug)]
 struct DomainData {
@@ -19,221 +23,316 @@ struct DomainData {
     cn: Vec<String>,
     alt_names: Vec<String>,
     dangling: bool,
+//    fingerprint: String, // uppercase hex SHA256
 }
 
-impl DomainData {
-    fn check_dangling(self: &mut Self) {
-        let domain = List.parse_dns_name(self.hostname.as_str()).unwrap();
-        let mut dns_names: Vec<String> = Vec::new();
+// Extract CN/ORG/SANs from X509
+fn get_values_from_cert(cert: &X509) -> (Vec<String>, Vec<String>, Vec<String>) {
+    let mut cn = Vec::new();
+    let mut org = Vec::new();
+    let mut alt = Vec::new();
 
-        dns_names.extend(self.cn.clone());
-        dns_names.extend(self.alt_names.clone());
- 
-        for cand in dns_names {
-            let cleaned_cand = &cand.clone().to_lowercase();
-            let host = List.parse_dns_name(cleaned_cand.as_str());
-            match host {
-                Ok(host) => {
-                    let host_root = host.root();
-                    match host_root {
-                        Some(host_root) => {
-                            if !(domain.root().unwrap() == host_root) {
-                                self.dangling = true;
-                            } else {
-                                self.dangling = false;
-                                break;
-                            }
-                        }
-                        None => {
-                            self.dangling = true;
-                        }
+    for entry in cert
+        .subject_name()
+        .entries_by_nid(openssl::nid::Nid::COMMONNAME)
+    {
+        if let Ok(data) = entry.data().as_utf8() {
+            cn.push(data.to_string());
+        }
+    }
+
+    for entry in cert
+        .subject_name()
+        .entries_by_nid(openssl::nid::Nid::ORGANIZATIONNAME)
+    {
+        if let Ok(data) = entry.data().as_utf8() {
+            org.push(data.to_string());
+        }
+    }
+
+    if let Some(san) = cert.subject_alt_names() {
+        for name in san.iter() {
+            if let Some(dns) = name.dnsname() {
+                alt.push(dns.to_string());
+            } else if let Some(uri) = name.uri() {
+                if let Ok(url) = Url::parse(uri) {
+                    if let Some(host) = url.domain() {
+                        alt.push(host.to_string());
                     }
                 }
-                Err(_) => {
-                    self.dangling = false;
-                }
             }
-
         }
+    }
+
+    (cn, org, alt)
+}
+
+fn cert_matches_domain(domain: &str, cn: &[String], alt: &[String]) -> bool {
+    for name in alt {
+        if name.eq_ignore_ascii_case(domain)
+            || domain.eq_ignore_ascii_case(name)
+            || domain.ends_with(&format!(".{}", name))
+        {
+            return true;
+        }
+    }
+    for name in cn {
+        if name.eq_ignore_ascii_case(domain)
+            || domain.eq_ignore_ascii_case(name)
+            || domain.ends_with(&format!(".{}", name))
+        {
+            return true;
+        }
+    }
+    false
+}
+
+fn blocking_probe_domain(
+    domain: &str,
+    port: &str,
+    connector: Arc<SslConnector>,
+    per_ip_timeout: Duration,
+) -> Vec<DomainData> {
+    let mut results: Vec<DomainData> = Vec::new();
+    let addr_string = format!("{}:{}", domain, port);
+    let addrs_iter = match addr_string.to_socket_addrs() {
+        Ok(a) => a.collect::<Vec<SocketAddr>>(),
+        Err(_) => return results,
+    };
+
+    let mut seen: HashSet<Vec<u8>> = HashSet::new();
+
+    for addr in addrs_iter {
+        let tcp = match TcpStream::connect_timeout(&addr, per_ip_timeout) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+
+        let _ = tcp.set_read_timeout(Some(per_ip_timeout));
+        let _ = tcp.set_write_timeout(Some(per_ip_timeout));
+
+        let ssl_stream = connector.connect(domain, tcp);
+        let ssl_stream = match ssl_stream {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+
+        let cert_opt = ssl_stream.ssl().peer_certificate();
+        let cert = match cert_opt {
+            Some(c) => c,
+            None => continue,
+        };
+
+        let der = match cert.to_der() {
+            Ok(d) => d,
+            Err(_) => continue,
+        };
         
+        
+	if !seen.insert(der.clone()) {
+ 	   continue;
+	}
+
+        let (cn, org, alt) = get_values_from_cert(&cert);
+        let matches = cert_matches_domain(domain, &cn, &alt);
+        let dangling = !matches;
+
+        results.push(DomainData {
+            hostname: domain.to_string(),
+            ip: addr.ip().to_string(),
+            org,
+            cn,
+            alt_names: alt,
+            dangling,
+  //          fingerprint,
+        });
     }
+    results
 }
 
-fn make_connection(domain: String, port: String) {
-    let tmp_dom = domain.clone();
-    let mut connector = SslConnector::builder(SslMethod::tls_client()).unwrap();
-    connector.set_verify(SslVerifyMode::NONE);
-
-    let conn = connector.build();
-    conn.configure()
-        .unwrap()
-        .use_server_name_indication(true)
-        .verify_hostname(true);
-
-    let con_string = format!("{}:{}", domain, &port);
-    let con_addrs = con_string.to_socket_addrs();
-    match con_addrs {
-        Ok(con_addrs) => {
-            for ip in con_addrs {
-                let tt = TcpStream::connect_timeout(&ip, Duration::from_secs(2));
-                let ex_cert = extract_ssl(&tt, &conn, &tmp_dom.as_str());
-                match ex_cert {
-                    Ok(ex_cert) => {
-                        let cn = get_value("cn", &ex_cert);
-                        let org = get_value("org", &ex_cert);
-                        let alt_names = get_value("doms", &ex_cert);
-
-                        let mut ch_domain = DomainData {
-                            hostname: tmp_dom.to_string().to_lowercase(),
-                            ip: ip.ip().to_string(),
-                            org,
-                            cn,
-                            alt_names,
-                            dangling: false,
-                        };
-                        ch_domain.check_dangling();
-                        let ser_domain = serde_json::to_string(&ch_domain).unwrap();
-
-                        println!("{}", ser_domain);
-                    }
-                    Err(_) => {
-                        //eprintln!("SSL/TLS not enabled on: {}:{}", &dom, &port);
-                    }
-                };
-            }
-        }
-        Err(_) => {}
+#[tokio::main(flavor = "multi_thread")]
+async fn main() -> stdio::Result<()> {
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos", target_os = "freebsd"))]
+    {
+        // Works on all Unix-like systems
+        openssl_probe::init_ssl_cert_env_vars();
     }
-}
 
-fn extract_ssl(stream: &Result<TcpStream, std::io::Error>, conn: &SslConnector, domain: &str,) -> Result<X509, ()> {
-    match stream {
-        Ok(stream) => {
-            let _ = stream
-                .set_read_timeout(Some(Duration::from_secs(2)))
-                .unwrap();
-            let _ = stream
-                .set_write_timeout(Some(Duration::from_secs(2)))
-                .unwrap();
-            let stream = conn.connect(&domain, stream);
-            match stream {
-                Ok(stream) => {
-                    let cert_stack: &StackRef<X509> = stream.ssl().peer_cert_chain().unwrap();
-                    let certs: Vec<X509> = cert_stack.iter().map(X509Ref::to_owned).collect();
-                    Ok(certs[0].to_owned())
-                }
-                Err(_) => {
-                    //eprintln!("{}", e.to_string());
-                    Err(())
-                }
-            }
+    #[cfg(any(target_os = "windows", target_os = "netbsd", target_os = "openbsd"))]
+    unsafe {
+        // Some Windows builds of openssl-probe expose only this
+        if let Err(_) = std::panic::catch_unwind(|| {
+            // Wrap in catch_unwind in case the symbol doesn't exist
+            openssl_probe::init_openssl_env_vars();
+        }) {
+            // Fallback
+            openssl_probe::init_ssl_cert_env_vars();
         }
-        Err(_) => Err(()),
     }
-}
 
-fn get_value<R: AsRef<X509Ref>>(n: &str, cert: &R) -> Vec<String> {
-    let cert = cert.as_ref();
-    if n == "cn" {
-        let try_common_names: Vec<_> = cert
-            .subject_name()
-            .entries_by_nid(openssl::nid::Nid::COMMONNAME)
-            .map(|x| x.data().as_utf8())
-            .collect();
-
-        let mut common_names: Vec<String> = Vec::with_capacity(try_common_names.len());
-        for cn in try_common_names {
-            if let Err(ref e) = cn {
-                println!("While parsing common name: {}", &e);
-            }
-            common_names.push(String::from(AsRef::<str>::as_ref(&cn.unwrap())));
-        }
-        common_names
-    } else if n == "org" {
-        let org: Vec<_> = cert
-            .subject_name()
-            .entries_by_nid(openssl::nid::Nid::ORGANIZATIONNAME)
-            .map(|x| x.data().as_utf8())
-            .collect();
-
-        let mut org_name: Vec<String> = Vec::with_capacity(org.len());
-        for o in org {
-            if let Err(ref e) = o {
-                println!("While parsing organization name: {}", &e);
-            }
-            org_name.push(String::from(AsRef::<str>::as_ref(&o.unwrap())));
-        }
-        org_name
-    } else {
-        let mut names = Vec::new();
-        // fixme: common names may not be host names.
-        if let Some(san) = cert.subject_alt_names() {
-            for name in san.iter() {
-                if let Some(name) = name.dnsname() {
-                    names.push(String::from(name));
-                } else if let Some(uri) = name.uri() {
-                    let url_parsed = reqwest::Url::parse(uri)
-                        .map_err(|_| {
-                            println!("This certificate has a URI SNI, but the URI is not parsable.")
-                        })
-                        .unwrap();
-                    if let Some(host) = url_parsed.domain() {
-                        names.push(String::from(host));
-                    }
-                }
-            }
-        }
-        names
-    }
-}
-
-fn main() {
-    openssl_probe::init_ssl_cert_env_vars();
 
     let args = App::new("SSLEnum [SSL Data Enumeration]")
-        .version("1.0.0")
-        .author("Mohamed Elbadry <me@melbadry9.xyz>")
+        .version("2.0.0")
+        .author("Mohamed Elbadry")
         .arg(
             Arg::with_name("threads")
                 .short("t")
                 .long("threads")
                 .value_name("THREADS")
-                .help("Sets number of threads")
+                .help("Concurrent blocking probes")
                 .takes_value(true)
-                .default_value("5"),
+                .default_value("200"),
         )
         .arg(
             Arg::with_name("domain")
                 .short("d")
                 .long("domain")
                 .value_name("DOMAIN")
-                .help("Sets domain to check")
-                .takes_value(true),
+                .takes_value(true)
+                .help("Single domain to test"),
         )
         .arg(
             Arg::with_name("port")
                 .short("p")
                 .long("port")
                 .value_name("PORT")
-                .help("Sets port number")
                 .takes_value(true)
                 .default_value("443"),
         )
+        .arg(
+            Arg::with_name("out")
+                .short("o")
+                .long("out")
+                .value_name("FILE")
+                .help("Write results to JSONL file")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("timeout")
+                .short("T")
+                .long("timeout")
+                .value_name("SECS")
+                .help("Per-IP connect/read/write timeout in seconds")
+                .takes_value(true)
+                .default_value("1"),
+        )
         .get_matches();
 
-    if !(args.is_present("domain")) {
-        let stream = io::stdin();
-        let threads_num = value_t!(args.value_of("threads"), usize).unwrap_or(5);
-        let pool = ThreadPool::new(threads_num);
-        for domain in stream.lock().lines() {
-            let tmp = args.value_of("port").unwrap().to_string().clone();
-            pool.execute(move || make_connection(domain.unwrap(), tmp));
-        }
-        pool.join();
+    let max_threads = value_t!(args.value_of("threads"), usize).unwrap_or(200);
+    let port = args.value_of("port").unwrap().to_string();
+
+    let mut builder = SslConnector::builder(SslMethod::tls()).expect("builder");
+    builder.set_verify(SslVerifyMode::NONE);
+    let connector = Arc::new(builder.build());
+
+    // ✅ Wrap file in Mutex<Arc<File>> for safe concurrent writes
+    let out_file = if let Some(path) = args.value_of("out") {
+        let file: tokio::fs::File = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .await?;
+        Some(Arc::new(Mutex::new(file)))
     } else {
-        make_connection(
-            args.value_of("domain").unwrap().to_string(),
-            args.value_of("port").unwrap().to_string(),
-        )
+        None
+    };
+
+    let sem = Arc::new(Semaphore::new(max_threads));
+    let per_ip_secs = value_t!(args.value_of("timeout"), u64).unwrap_or(1);
+    let per_ip_timeout = Duration::from_secs(per_ip_secs);
+
+    async fn spawn_probe_task(
+        sem: Arc<Semaphore>,
+        connector: Arc<SslConnector>,
+        domain: String,
+        port: String,
+        per_ip_timeout: Duration,
+    ) -> Vec<DomainData> {
+        let permit = sem.acquire_owned().await.unwrap();
+        task::spawn_blocking(move || {
+            let _p = permit;
+            blocking_probe_domain(&domain, &port, connector, per_ip_timeout)
+        })
+        .await
+        .unwrap_or_default()
     }
+
+    // Single-domain mode
+    if let Some(domain) = args.value_of("domain") {
+        let res = spawn_probe_task(
+            sem.clone(),
+            connector.clone(),
+            domain.to_string(),
+            port.clone(),
+            per_ip_timeout,
+        )
+        .await;
+
+        if let Some(f) = &out_file {
+            let mut file = f.lock().await;
+            for entry in res {
+                let json = serde_json::to_string(&entry).unwrap();
+                let _ = file.write_all(json.as_bytes()).await;
+                let _ = file.write_all(b"\n").await;
+            }
+        } else {
+            for entry in res {
+                println!("{}", serde_json::to_string(&entry).unwrap());
+            }
+        }
+        return Ok(());
+    }
+
+    // Bulk mode
+    let stdin = BufReader::new(tokio::io::stdin());
+    let mut lines = stdin.lines();
+    let mut tasks = FuturesUnordered::new();
+
+    while let Ok(Some(line)) = lines.next_line().await {
+        let domain = line.trim().to_string();
+        if domain.is_empty() {
+            continue;
+        }
+
+        let sem_c = sem.clone();
+        let connector_c = connector.clone();
+        let port_c = port.clone();
+
+        let fut = spawn_probe_task(sem_c, connector_c, domain, port_c, per_ip_timeout);
+        tasks.push(fut);
+
+        if tasks.len() >= max_threads {
+            if let Some(res_vec) = tasks.next().await {
+                if let Some(file) = &out_file {
+                    let mut file = file.lock().await;
+                    for entry in res_vec {
+                        let json = serde_json::to_string(&entry).unwrap();
+                        let _ = file.write_all(json.as_bytes()).await;
+                        let _ = file.write_all(b"\n").await;
+                    }
+                } else {
+                    for entry in res_vec {
+                        println!("{}", serde_json::to_string(&entry).unwrap());
+                    }
+                }
+            }
+        }
+    }
+
+    while let Some(res_vec) = tasks.next().await {
+        if let Some(file) = &out_file {
+            let mut file = file.lock().await;
+            for entry in res_vec {
+                let json = serde_json::to_string(&entry).unwrap();
+                let _ = file.write_all(json.as_bytes()).await;
+                let _ = file.write_all(b"\n").await;
+            }
+        } else {
+            for entry in res_vec {
+                println!("{}", serde_json::to_string(&entry).unwrap());
+            }
+        }
+    }
+
+    Ok(())
 }

@@ -16,13 +16,13 @@ cd SSLEnum
 cargo install --path .
 ```
 
-## Usage
+## Usagec
 
 - Help
 
 ```txt
-SSLEnum [SSL Data Enumeration] 1.0.1
-Mohamed Elbadry <me@melbadry9.xyz>
+SSLEnum [SSL Data Enumeration] 2.0.0
+Mohamed Elbadry
 
 USAGE:
     sslenum [OPTIONS]
@@ -32,13 +32,15 @@ FLAGS:
     -V, --version    Prints version information
 
 OPTIONS:
-    -d, --domain <DOMAIN>      Sets domain to check
-    -p, --port <PORT>          Sets port number [default: 443]    
-    -t, --threads <THREADS>    Sets number of threads [default: 5]
-  ```
+    -d, --domain <DOMAIN>      Single domain to test
+    -o, --out <FILE>           Write results to JSONL file
+    -p, --port <PORT>           [default: 443]
+    -t, --threads <THREADS>    Concurrent blocking probes [default: 200]
+    -T, --timeout <SECS>       Per-IP connect/read/write timeout in seconds [default: 1]
+```
 
 ```bash
-$ cat subdomains.list | sslenum -t 5 -p 443
+$ cat subdomains.list | sslenum -t 50 -p 443 -T 3 -o ssl.json
 $ sslenum -d example.com | jq
 ````
 
@@ -47,22 +49,16 @@ $ sslenum -d example.com | jq
 ```json
 {
   "hostname": "example.com",
-  "ip": "93.184.216.34",
+  "ip": "23.215.0.138",
   "org": [
     "Internet Corporation for Assigned Names and Numbers"
   ],
   "cn": [
-    "www.example.org"
+    "*.example.com"
   ],
   "alt_names": [
-    "www.example.org",
-    "example.com",
-    "example.edu",
-    "example.net",
-    "example.org",
-    "www.example.com",
-    "www.example.edu",
-    "www.example.net"
+    "*.example.com",
+    "example.com"
   ],
   "dangling": false
 }
