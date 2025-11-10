@@ -111,15 +111,50 @@ fn get_values_from_cert(cert: &X509) -> (Vec<String>, String, Vec<String>) {
 }
 
 fn cert_matches_domain(domain: &str, cn: &[String], alt: &[String]) -> bool {
-    fn is_match(name: &str, domain: &str) -> bool {
-        name.eq_ignore_ascii_case(domain)
-            || domain.eq_ignore_ascii_case(name)
-            || domain.ends_with(&format!(".{}", name))
+    fn normalize(value: &str) -> String {
+        value.trim_end_matches('.').to_ascii_lowercase()
+    }
+
+    fn wildcard_match(domain: &str, pattern: &str) -> bool {
+        let suffix = &pattern[2..];
+        if suffix.is_empty() || suffix.contains('*') {
+            return false;
+        }
+
+        if !domain.ends_with(suffix) || domain.len() <= suffix.len() {
+            return false;
+        }
+
+        let prefix = &domain[..domain.len() - suffix.len()];
+        prefix.ends_with('.') && prefix.len() > 1
+    }
+
+    fn is_match(domain: &str, name: &str) -> bool {
+        let name = normalize(name);
+
+        if name.is_empty() {
+            return false;
+        }
+
+        if name == domain {
+            return true;
+        }
+
+        if name.starts_with("*.") {
+            return wildcard_match(domain, &name);
+        }
+
+        false
+    }
+
+    let domain = normalize(domain);
+    if domain.is_empty() {
+        return false;
     }
 
     cn.iter()
         .chain(alt.iter())
-        .any(|name| is_match(name, domain))
+        .any(|name| is_match(&domain, name))
 }
 
 fn blocking_probe_domain(
