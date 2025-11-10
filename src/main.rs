@@ -1,4 +1,5 @@
-use clap::{App, Arg, value_t};
+use clap::{value_t, App, Arg};
+use futures::stream::{FuturesUnordered, StreamExt};
 use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode};
 use openssl::x509::X509;
 use openssl_probe;
@@ -10,28 +11,78 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::fs::OpenOptions;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::sync::{Semaphore, Mutex};
+use tokio::sync::{Mutex, Semaphore};
 use tokio::task;
-use futures::stream::{FuturesUnordered, StreamExt};
 use url::Url;
 
 #[derive(Serialize, Deserialize, Debug)]
 struct DomainData {
     hostname: String,
     ip: String,
-    org: Vec<String>,
+    port: String,
+    org: String,
     cn: Vec<String>,
     alt_names: Vec<String>,
     dangling: bool,
-//    fingerprint: String, // uppercase hex SHA256
 }
 
 // Extract CN/ORG/SANs from X509
-fn get_values_from_cert(cert: &X509) -> (Vec<String>, Vec<String>, Vec<String>) {
+fn get_values_from_cert(cert: &X509) -> (Vec<String>, String, Vec<String>) {
     let mut cn = Vec::new();
-    let mut org = Vec::new();
+    let mut org = String::new();
     let mut alt = Vec::new();
 
+    // Try getting organization from subject
+    for entry in cert
+        .subject_name()
+        .entries_by_nid(openssl::nid::Nid::ORGANIZATIONNAME)
+    {
+        if let Ok(data) = entry.data().as_utf8() {
+            org = data.to_string();
+            break;
+        }
+    }
+
+    // If org is empty, try getting it from issuer
+    if org.is_empty() {
+        for entry in cert
+            .issuer_name()
+            .entries_by_nid(openssl::nid::Nid::ORGANIZATIONNAME)
+        {
+            if let Ok(data) = entry.data().as_utf8() {
+                org = data.to_string();
+                break;
+            }
+        }
+    }
+
+    // Try organizational unit from subject if still empty
+    if org.is_empty() {
+        for entry in cert
+            .subject_name()
+            .entries_by_nid(openssl::nid::Nid::ORGANIZATIONALUNITNAME)
+        {
+            if let Ok(data) = entry.data().as_utf8() {
+                org = data.to_string();
+                break;
+            }
+        }
+    }
+
+    // Try organizational unit from issuer if still empty
+    if org.is_empty() {
+        for entry in cert
+            .issuer_name()
+            .entries_by_nid(openssl::nid::Nid::ORGANIZATIONALUNITNAME)
+        {
+            if let Ok(data) = entry.data().as_utf8() {
+                org = data.to_string();
+                break;
+            }
+        }
+    }
+
+    // Get CN (Common Name)
     for entry in cert
         .subject_name()
         .entries_by_nid(openssl::nid::Nid::COMMONNAME)
@@ -41,15 +92,7 @@ fn get_values_from_cert(cert: &X509) -> (Vec<String>, Vec<String>, Vec<String>) 
         }
     }
 
-    for entry in cert
-        .subject_name()
-        .entries_by_nid(openssl::nid::Nid::ORGANIZATIONNAME)
-    {
-        if let Ok(data) = entry.data().as_utf8() {
-            org.push(data.to_string());
-        }
-    }
-
+    // Get Subject Alternative Names
     if let Some(san) = cert.subject_alt_names() {
         for name in san.iter() {
             if let Some(dns) = name.dnsname() {
@@ -68,23 +111,15 @@ fn get_values_from_cert(cert: &X509) -> (Vec<String>, Vec<String>, Vec<String>) 
 }
 
 fn cert_matches_domain(domain: &str, cn: &[String], alt: &[String]) -> bool {
-    for name in alt {
-        if name.eq_ignore_ascii_case(domain)
+    fn is_match(name: &str, domain: &str) -> bool {
+        name.eq_ignore_ascii_case(domain)
             || domain.eq_ignore_ascii_case(name)
             || domain.ends_with(&format!(".{}", name))
-        {
-            return true;
-        }
     }
-    for name in cn {
-        if name.eq_ignore_ascii_case(domain)
-            || domain.eq_ignore_ascii_case(name)
-            || domain.ends_with(&format!(".{}", name))
-        {
-            return true;
-        }
-    }
-    false
+
+    cn.iter()
+        .chain(alt.iter())
+        .any(|name| is_match(name, domain))
 }
 
 fn blocking_probe_domain(
@@ -127,11 +162,10 @@ fn blocking_probe_domain(
             Ok(d) => d,
             Err(_) => continue,
         };
-        
-        
-	if !seen.insert(der.clone()) {
- 	   continue;
-	}
+
+        if !seen.insert(der.clone()) {
+            continue;
+        }
 
         let (cn, org, alt) = get_values_from_cert(&cert);
         let matches = cert_matches_domain(domain, &cn, &alt);
@@ -140,11 +174,11 @@ fn blocking_probe_domain(
         results.push(DomainData {
             hostname: domain.to_string(),
             ip: addr.ip().to_string(),
+            port: port.to_string(),
             org,
             cn,
             alt_names: alt,
             dangling,
-  //          fingerprint,
         });
     }
     results
@@ -152,7 +186,12 @@ fn blocking_probe_domain(
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> stdio::Result<()> {
-    #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos", target_os = "freebsd"))]
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "macos",
+        target_os = "freebsd"
+    ))]
     {
         // Works on all Unix-like systems
         openssl_probe::init_ssl_cert_env_vars();
@@ -169,7 +208,6 @@ async fn main() -> stdio::Result<()> {
             openssl_probe::init_ssl_cert_env_vars();
         }
     }
-
 
     let args = App::new("SSLEnum [SSL Data Enumeration]")
         .version("2.0.0")

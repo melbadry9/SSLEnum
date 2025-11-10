@@ -49,10 +49,9 @@ $ sslenum -d example.com | jq
 ```json
 {
   "hostname": "example.com",
-  "ip": "23.215.0.138",
-  "org": [
-    "Internet Corporation for Assigned Names and Numbers"
-  ],
+  "ip": "23.220.75.232",
+  "port": "443",
+  "org": "Internet Corporation for Assigned Names and Numbers",
   "cn": [
     "*.example.com"
   ],
@@ -62,4 +61,5 @@ $ sslenum -d example.com | jq
   ],
   "dangling": false
 }
+
 ```
